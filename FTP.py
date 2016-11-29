@@ -5,7 +5,6 @@ import socket
 import sys
 
 PORT_NUMBER = 25370
-IS_EXPLICIT = False
 USE_PASSIVE = False
 
 
@@ -22,16 +21,21 @@ def main():
         USE_PASSIVE = True
     address = (args.address, args.port)
     print('Connecting to ' + address[0] + ':' + str(address[1]))
+    sock=socket.socket()
+    data_sock=socket.socket()
     try:
         sock = connect(address)
         print(receive_full_reply(sock))
         data_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         data_sock.close()
-        login(sock, None, 'anonymous', None)
+        login(sock, None, None, None)
         run(sock, data_sock)
-    except Exception as error:
-        raise error
+    except ConnectionError as error:
+        print(error)
         sys.exit(1)
+    except Exception as error:
+        print(error)
+        run(sock,data_sock)
 
 
 def run(control_sock, data_sock):
@@ -41,13 +45,10 @@ def run(control_sock, data_sock):
         command = query[0].lower()
         argument = query[1] if len(query) > 1 else None
         option = query[2] if len(query) > 2 else None
-        if IS_EXPLICIT:
-            send_explicitly(control_sock, message)
-        else:
-            comm = FUNCTIONS.get(command, invalid)
-            result = comm(control_sock, data_sock, argument, option)
-            if result is not None:
-                data_sock = result
+        comm = FUNCTIONS.get(command, invalid)
+        result = comm(control_sock, data_sock, argument, option)
+        if result is not None:
+            data_sock = result
 
 
 def parse_args():
@@ -64,7 +65,7 @@ def connect(host):
         address = socket.getaddrinfo(host[0], host[1])
         sock.connect(address[0][4])
     except socket.gaierror as error:
-        raise ValueError('Address fetching failed: {}:{}'.format(host[0], host[1]))
+        raise ConnectionError('Address fetching failed: {}:{}'.format(host[0], host[1]))
     except Exception as error:
         raise ConnectionError('Connection error: ' + str(error))
     return sock
@@ -104,7 +105,8 @@ def port(control_sock, data_sock=None, argument=None, extra_argument=None):
 
 
 def login(control_sock, data_sock, name, extra_arg):
-    name = input('Username: ')
+    if name is None:
+        name = input('Username: ')
     send(control_sock, 'USER', name)
     reply = receive_full_reply(control_sock)
     print(reply)
@@ -115,6 +117,9 @@ def password(control_sock, data_sock, passw, extra_arg):
     passw = input('Password: ')
     send(control_sock, 'PASS', passw)
     reply = receive_full_reply(control_sock)
+    reg=re.compile(r'2\d\d')
+    if not re.match(reg, reply):
+        raise ValueError('Login is incorrect. Sign in with \'user\' command')
     print(reply)
 
 
@@ -191,8 +196,6 @@ def size(control_sock, data_sock, filename, path_value):
     reply = receive_full_reply(control_sock)
     reg = r' (\d+)'
     result = re.findall(reg, reply)
-    print('size:' + reply)
-    print('size:' + str(result))
     return int(result[0])
 
 
@@ -201,10 +204,15 @@ def get(control_sock, data_sock, filename, path_value):
         path_value = os.getcwd() + '\\' + filename.split('/')[-1]
     transfer_type(control_sock, None, 'I', None)
     file_size = size(control_sock, None, filename, None)
-    data_sock = pasv(control_sock)
+    if not USE_PASSIVE:
+        sock = port(control_sock)
+    else:
+        data_sock = pasv(control_sock)
     send(control_sock, 'RETR', filename)
     reply = receive_full_reply(control_sock)
     print(reply)
+    if not USE_PASSIVE:
+        data_sock, address = sock.accept()
     with open(path_value, 'wb') as result:
         received = 0
         while file_size > received:
@@ -223,10 +231,15 @@ def put(control_sock, data_sock, local_file, remote_name):
         folder = get_current_remote_directory(control_sock)
         remote_name = folder + '/' + local_file.split('/')[-1]
     transfer_type(control_sock, None, 'I', None)
-    data_sock = pasv(control_sock)
+    if not USE_PASSIVE:
+        sock = port(control_sock)
+    else:
+        data_sock = pasv(control_sock)
     send(control_sock, 'STOR', remote_name)
     reply = receive_full_reply(control_sock)
     print(reply)
+    if not USE_PASSIVE:
+        data_sock, address = sock.accept()
     with open(local_file, 'rb') as file:
         data_sock.sendfile(file)
     reply = receive_full_reply(control_sock)
