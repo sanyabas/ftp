@@ -6,12 +6,7 @@ import sys
 
 PORT_NUMBER = 25370
 USE_PASSIVE = False
-
-
-def send_explicitly(sock, message):
-    sock.sendall(bytes(message + '\r\n', 'ASCII'))
-    reply = sock.recv(65535).decode('ASCII')
-    print(reply)
+FILE_TRANSFER_START = '150'
 
 
 def main():
@@ -20,9 +15,9 @@ def main():
         global USE_PASSIVE
         USE_PASSIVE = True
     address = (args.address, args.port)
-    print('Connecting to ' + address[0] + ':' + str(address[1]))
-    sock=socket.socket()
-    data_sock=socket.socket()
+    print('Connecting to {}:{}'.format(address[0], address[1]))
+    sock = socket.socket()
+    data_sock = socket.socket()
     try:
         sock = connect(address)
         print(receive_full_reply(sock))
@@ -35,7 +30,7 @@ def main():
         sys.exit(1)
     except Exception as error:
         print(error)
-        run(sock,data_sock)
+        run(sock, data_sock)
 
 
 def run(control_sock, data_sock):
@@ -69,10 +64,6 @@ def connect(host):
     except Exception as error:
         raise ConnectionError('Connection error: ' + str(error))
     return sock
-
-
-def invalid(arg1, arg2, arg3, arg4):
-    print('Invalid command\nUse "HELP" command or "/?" for internal help')
 
 
 def pasv(control_sock, data_sock=None, argument=None, extra_arg=None):
@@ -117,10 +108,10 @@ def password(control_sock, data_sock, passw, extra_arg):
     passw = input('Password: ')
     send(control_sock, 'PASS', passw)
     reply = receive_full_reply(control_sock)
-    reg=re.compile(r'2\d\d')
+    reg = re.compile(r'2\d\d')
+    print(reply)
     if not re.match(reg, reply):
         raise ValueError('Login is incorrect. Sign in with \'user\' command')
-    print(reply)
 
 
 def dir_list(control_sock, data_sock, argument, extra_arg):
@@ -185,12 +176,6 @@ def stat(control_sock, data_sock, argument, extra_arg):
     print(reply)
 
 
-def delete(control_sock, data_sock, filename, extra_arg):
-    send(control_sock, 'RETR', filename)
-    reply = receive_full_reply(control_sock)
-    print(reply)
-
-
 def size(control_sock, data_sock, filename, path_value):
     send(control_sock, 'SIZE', filename)
     reply = receive_full_reply(control_sock)
@@ -201,7 +186,7 @@ def size(control_sock, data_sock, filename, path_value):
 
 def get(control_sock, data_sock, filename, path_value):
     if path_value is None:
-        path_value = os.getcwd() + '\\' + filename.split('/')[-1]
+        path_value = '{}\\{}'.format(os.getcwd(), filename.split('/')[-1])
     transfer_type(control_sock, None, 'I', None)
     file_size = size(control_sock, None, filename, None)
     if not USE_PASSIVE:
@@ -211,6 +196,8 @@ def get(control_sock, data_sock, filename, path_value):
     send(control_sock, 'RETR', filename)
     reply = receive_full_reply(control_sock)
     print(reply)
+    if not reply.startswith(FILE_TRANSFER_START):
+        raise FileNotFoundError('Couldn\'t download file {}'.format(filename))
     if not USE_PASSIVE:
         data_sock, address = sock.accept()
     with open(path_value, 'wb') as result:
@@ -280,6 +267,16 @@ def int_help(arg1, arg2, arg3, arg4):
     cd\tpwd\tsyst\tstat
     size\tget\t?
     """)
+
+
+def send_explicitly(sock, message):
+    sock.sendall(bytes(message + '\r\n', 'ASCII'))
+    reply = sock.recv(65535).decode('ASCII')
+    print(reply)
+
+
+def invalid(arg1, arg2, arg3, arg4):
+    print('Invalid command\nUse "HELP" command or "/?" for internal help')
 
 
 FUNCTIONS = {
