@@ -3,8 +3,8 @@ import os
 import re
 import socket
 import sys
+import os.path
 
-PORT_NUMBER = 25370
 USE_PASSIVE = False
 FILE_TRANSFER_START = '150'
 
@@ -17,11 +17,13 @@ def main():
     address = (args.address, args.port)
     print('Connecting to {}:{}'.format(address[0], address[1]))
     sock = socket.socket()
+    sock.settimeout(2)
     data_sock = socket.socket()
     try:
         sock = connect(address)
         print(receive_full_reply(sock))
         data_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        data_sock.settimeout(2)
         data_sock.close()
         login(sock, None, None, None)
         run(sock, data_sock)
@@ -81,17 +83,17 @@ def pasv(control_sock, data_sock=None, argument=None, extra_arg=None):
 
 
 def port(control_sock, data_sock=None, argument=None, extra_argument=None):
-    global PORT_NUMBER
     ip_address = control_sock.getsockname()[0]
-    port_whole, port_factor = PORT_NUMBER // 256, PORT_NUMBER % 256
     sock = socket.socket()
-    sock.bind(('', PORT_NUMBER))
+    sock.bind(('', 0))
+    sock.listen()
+    local_port = sock.getsockname()[1]
+    port_whole, port_factor = local_port // 256, local_port % 256
     query = 'PORT {},{},{}'.format(ip_address.replace('.', ','), port_whole, port_factor)
+    print(query)
     send(control_sock, query)
     reply = receive_full_reply(control_sock)
     print(reply)
-    sock.listen()
-    PORT_NUMBER += 1
     return sock
 
 
@@ -126,7 +128,7 @@ def dir_list(control_sock, data_sock, argument, extra_arg):
         data_sock, address = sock.accept()
     if data_sock is None:
         raise ConnectionError('Data connection is required')
-    data = data_sock.recv(65535).decode('UTF-8')
+    data = receive_full_data(data_sock).decode('UTF-8')
     print(data)
     data_sock.close()
     reply = receive_full_reply(control_sock)
@@ -207,7 +209,7 @@ def get(control_sock, data_sock, filename, path_value):
             if not data:
                 break
             result.write(data)
-            received += 65535
+            received += len(data)
     data_sock.close()
     reply = receive_full_reply(control_sock)
     print(reply)
@@ -215,8 +217,9 @@ def get(control_sock, data_sock, filename, path_value):
 
 def put(control_sock, data_sock, local_file, remote_name):
     if remote_name is None:
-        folder = get_current_remote_directory(control_sock)
-        remote_name = folder + '/' + local_file.split('/')[-1]
+        # folder = get_current_remote_directory(control_sock)
+        # remote_name = folder + '/' + local_file.split('/')[-1]
+        remote_name = os.path.basename(local_file)
     transfer_type(control_sock, None, 'I', None)
     if not USE_PASSIVE:
         sock = port(control_sock)
@@ -225,10 +228,13 @@ def put(control_sock, data_sock, local_file, remote_name):
     send(control_sock, 'STOR', remote_name)
     reply = receive_full_reply(control_sock)
     print(reply)
+    if reply[0] == '5':
+        return
     if not USE_PASSIVE:
         data_sock, address = sock.accept()
     with open(local_file, 'rb') as file:
         data_sock.sendfile(file)
+    data_sock.close()
     reply = receive_full_reply(control_sock)
     print(reply)
 
@@ -236,7 +242,7 @@ def put(control_sock, data_sock, local_file, remote_name):
 def get_current_remote_directory(control_sock):
     send(control_sock, 'PWD')
     reply = receive_full_reply(control_sock)
-    reg = re.compile(r'"([0-9A-Za-z_]")')
+    reg = re.compile(r'("[0-9A-Za-z_]")')
     current = re.findall(reg, reply)
     return current
 
@@ -245,10 +251,28 @@ def receive_full_reply(sock):
     reply = ''
     tmp = sock.recv(65535).decode('ASCII')
     reply += tmp
-    first_reply_reg = re.compile(r'^\d\d\d ', re.MULTILINE)
+    first_reply_reg = re.compile(r'^\d\d\d .*$', re.MULTILINE)
     while not re.findall(first_reply_reg, tmp):
-        tmp = sock.recv(65535).decode('ASCII')
-        reply += tmp
+        try:
+            tmp = sock.recv(65535).decode('ASCII')
+            reply += tmp
+        except TimeoutError:
+            break
+    return reply
+
+
+def receive_full_data(sock):
+    reply = b''
+    sock.settimeout(2)
+    while True:
+        try:
+            tmp = sock.recv(65535)
+            if not tmp:
+                break
+        except TimeoutError:
+            break
+        finally:
+            reply += tmp
     return reply
 
 
