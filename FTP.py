@@ -210,7 +210,7 @@ def size(control_sock, data_sock, filename, path_value):
 
 def get(control_sock, data_sock, filename, path_value):
     if path_value is None:
-        path_value = '{}/{}'.format(os.getcwd(), filename.split('/')[-1])
+        path_value = '{}/{}'.format(os.getcwd(), os.path.basename(filename))
     transfer_type(control_sock, None, 'I', None)
     file_size = size(control_sock, None, filename, None)
     if not USE_PASSIVE:
