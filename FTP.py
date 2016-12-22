@@ -5,6 +5,8 @@ import socket
 import sys
 import os.path
 
+import time
+
 USE_PASSIVE = False
 FILE_TRANSFER_START = '150'
 
@@ -208,30 +210,56 @@ def size(control_sock, data_sock, filename, path_value):
     return int(result[0])
 
 
-def get(control_sock, data_sock, filename, path_value):
-    if path_value is None:
-        path_value = '{}/{}'.format(os.getcwd(), os.path.basename(filename))
+def count_speed(passed, start_time, current):
+    average = passed / (current - start_time)
+    unit_index = 0
+    while average > 1024:
+        average /= 1024
+        unit_index += 1
+    return '{:>10.1f}{}'.format(average, UNITS[unit_index])
+
+
+def print_progress(iteration, total, speed='', prefix='Progress:', suffix='Complete', decimals=1, bar_length=100):
+    format_string = "{0:." + str(decimals) + "f}"
+    percent = format_string.format(100 * (iteration / float(total)))
+    filled_length = int(round(bar_length * iteration / float(total)))
+    bar = '█' * filled_length + '-' * (bar_length - filled_length)
+    sys.stdout.write('\r{} [{}] {}{} {}; {}'.format(prefix, bar, percent, '%', suffix, speed))
+    if iteration == total:
+        sys.stdout.write('\n\n')
+    sys.stdout.flush()
+
+
+def get(control_sock, data_sock, local_file, remote_file):
+    if local_file is None:
+        raise ValueError("Please specify remote file name")
+    if remote_file is None:
+        remote_file = '{}/{}'.format(os.getcwd(), os.path.basename(local_file))
     transfer_type(control_sock, None, 'I', None)
-    file_size = size(control_sock, None, filename, None)
+    file_size = size(control_sock, None, local_file, None)
     if not USE_PASSIVE:
         sock = port(control_sock)
     else:
         data_sock = pasv(control_sock)
-    send(control_sock, 'RETR', filename)
+    send(control_sock, 'RETR', local_file)
     reply = receive_full_reply(control_sock)
     print(reply)
     if not reply.startswith(FILE_TRANSFER_START):
-        raise FileNotFoundError('Couldn\'t download file {}'.format(filename))
+        raise FileNotFoundError('Couldn\'t download file {}'.format(local_file))
     if not USE_PASSIVE:
         data_sock, address = sock.accept()
-    with open(path_value, 'wb') as result:
+    with open(remote_file, 'wb') as result:
         received = 0
+        print_progress(received, file_size)
+        start_time = time.time()
         while file_size > received:
             data = data_sock.recv(65535)
             if not data:
                 break
             result.write(data)
             received += len(data)
+            speed = count_speed(received, start_time, time.time())
+            print_progress(received, file_size, speed)
     data_sock.close()
     reply = receive_full_reply(control_sock)
     print(reply)
@@ -342,6 +370,8 @@ FUNCTIONS = {
     'put': put,
     '?': int_help
 }
+
+UNITS = ['B/s', 'KB/s', 'MB/s', 'GB/s']
 
 if __name__ == '__main__':
     main()
