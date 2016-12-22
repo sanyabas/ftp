@@ -1,10 +1,9 @@
 import argparse
 import os
+import os.path
 import re
 import socket
 import sys
-import os.path
-
 import time
 
 USE_PASSIVE = False
@@ -12,12 +11,16 @@ FILE_TRANSFER_START = '150'
 
 
 def run_batch_mode(args, control_sock, data_sock):
-    login(control_sock, data_sock, 'ftp', 'ftp')
-    if args.get:
-        get(control_sock, data_sock, args.remote, args.local)
-    else:
-        put(control_sock, data_sock, args.local, args.remote)
-    quit(control_sock)
+    try:
+        login(control_sock, data_sock, 'ftp', 'ftp')
+        if args.get:
+            get(control_sock, data_sock, args.remote, args.local)
+        else:
+            put(control_sock, data_sock, args.local, args.remote)
+    except Exception as error:
+        print(error)
+    finally:
+        disconnect(control_sock)
 
 
 def main():
@@ -99,8 +102,8 @@ def pasv(control_sock, data_sock=None, argument=None, extra_arg=None):
     reg = r'(\d+),(\d+),(\d+),(\d+),(\d+),(\d+)'
     res = re.findall(reg, reply)[0]
     ip_address = '.'.join(res[:4])
-    port = int(res[4]) * 256 + int(res[5])
-    parameters = (ip_address, port)
+    port_number = int(res[4]) * 256 + int(res[5])
+    parameters = (ip_address, port_number)
     data = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     data.connect(parameters)
     return data
@@ -159,7 +162,7 @@ def dir_list(control_sock, data_sock, argument, extra_arg):
     print(reply)
 
 
-def quit(control_sock, data_sock=None, argument=None, extra_arg=None):
+def disconnect(control_sock, data_sock=None, argument=None, extra_arg=None):
     send(control_sock, 'QUIT')
     reply = receive_full_reply(control_sock)
     print(reply)
@@ -266,6 +269,8 @@ def get(control_sock, data_sock, local_file, remote_file):
 
 
 def put(control_sock, data_sock, local_file, remote_name):
+    if local_file is None:
+        raise ValueError("Please specify local file name")
     if remote_name is None:
         remote_name = os.path.basename(local_file)
     transfer_type(control_sock, None, 'I', None)
@@ -281,7 +286,16 @@ def put(control_sock, data_sock, local_file, remote_name):
     if not USE_PASSIVE:
         data_sock, address = sock.accept()
     with open(local_file, 'rb') as file:
-        data_sock.sendfile(file)
+        sent = 0
+        file_size = os.path.getsize(local_file)
+        print_progress(sent, file_size)
+        start_time = time.time()
+        while file_size > sent:
+            data = file.read(65535)
+            data_sock.sendall(data)
+            sent += len(data)
+            speed = count_speed(sent, start_time, time.time())
+            print_progress(sent, file_size, speed)
     data_sock.close()
     reply = receive_full_reply(control_sock)
     print(reply)
@@ -357,7 +371,7 @@ FUNCTIONS = {
     'pasv': pasv,
     'ls': dir_list,
     'dir': dir_list,
-    'quit': quit,
+    'quit': disconnect,
     'help': server_help,
     'type': transfer_type,
     'cd': cwd,
